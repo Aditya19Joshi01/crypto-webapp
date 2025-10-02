@@ -53,11 +53,9 @@ Built as part of the **B2C2 Graduate DeFi Developer assignment**.
 │   ├── models/price_model.py # SQLAlchemy Price model
 │   ├── services/services.py  # External integrations (CoinGecko, DeFiLlama, cUSD via Web3)
 │   └── requirements.txt      # Backend dependencies
-├── frontend/
-│   └── streamlit_app.py      # Streamlit dashboard (current UI)
 ├── docker-compose.yml        # Orchestration (backend, frontend, postgres, redis)
 ├── Dockerfile                # Backend container
-├── Dockerfile.frontend       # Streamlit/Next.js frontend container
+├── streamlit_app.py          # Streamlit dashboard (current UI)
 └── README.md
 ```
 
