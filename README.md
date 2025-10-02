@@ -32,6 +32,7 @@ Built as part of the **B2C2 Graduate DeFi Developer assignment**.
 
   * **FastAPI** backend with OpenAPI/Swagger docs
   * **Postgres** for historical storage
+  * **Alembic** for database migrations
   * **Redis** for caching latest prices + **WebSocket pub/sub**
   * **WebSocket endpoint** for live price updates
 
@@ -46,16 +47,18 @@ Built as part of the **B2C2 Graduate DeFi Developer assignment**.
 
 ```
 .
+├── alembic/                      # Alembic migrations scripts
+├── alembic.ini                   # Alembic configuration
 ├── backend/
-│   ├── app.py                # FastAPI app (endpoints, poller, WebSocket)
-│   ├── config.py             # Config/env defaults
-│   ├── database.py           # SQLAlchemy async setup
-│   ├── models/price_model.py # SQLAlchemy Price model
-│   ├── services/services.py  # External integrations (CoinGecko, DeFiLlama, cUSD via Web3)
-│   └── requirements.txt      # Backend dependencies
-├── docker-compose.yml        # Orchestration (backend, frontend, postgres, redis)
-├── Dockerfile                # Backend container
-├── streamlit_app.py          # Streamlit dashboard (current UI)
+│   ├── app.py                    # FastAPI app (endpoints, poller, WebSocket)
+│   ├── config.py                 # Config/env defaults
+│   ├── database.py               # POSTGRES Database async setup
+│   ├── models/price_model.py     # Database Price model
+│   ├── services/services.py      # External integrations (CoinGecko, DeFiLlama, cUSD via Web3)
+│   └── requirements.txt          # Backend dependencies
+├── docker-compose.yml            # Orchestration (backend, frontend, postgres, redis)
+├── Dockerfile                    # Backend container
+├── streamlit_app.py              # Streamlit dashboard (current UI)
 └── README.md
 ```
 
@@ -109,7 +112,7 @@ curl -X POST http://localhost:8000/prices/cusd/fetch
 
 ## ⚙️ Tech Stack
 
-  * **Backend:** FastAPI, SQLAlchemy (async), httpx
+  * **Backend:** FastAPI, SQLAlchemy (async), **Alembic**, httpx
   * **Frontend:** Streamlit (prototype UI; Next.js React planned)
   * **Database:** Postgres (historical price storage)
   * **Cache:** Redis (latest prices + WebSocket pub/sub)
@@ -121,6 +124,7 @@ curl -X POST http://localhost:8000/prices/cusd/fetch
 ## 📌 Key Decisions
 
   * Used **Docker Compose** to orchestrate backend, frontend, DB, and cache for a streamlined setup.
+  * Implemented **Alembic** to manage database migrations, ensuring schema changes are tracked and deployed reliably.
   * Chose **Streamlit** for quick prototyping of the UI; a **Next.js** frontend will be added later for production quality.
   * Designed the system with **extensibility** (can add new coins/protocols easily).
 
@@ -130,7 +134,6 @@ curl -X POST http://localhost:8000/prices/cusd/fetch
 
   * Replace Streamlit with **Next.js React frontend** (already scaffolded).
   * Add **wallet connection** (MetaMask/WalletConnect) for user balances and interaction.
-  * Improve DB layer with migrations (**Alembic**) and indexing.
   * Expand test coverage with unit & integration tests.
   * Add monitoring/metrics for performance.
 
@@ -144,4 +147,4 @@ curl -X POST http://localhost:8000/prices/cusd/fetch
   * **REST API** with required endpoints + error handling
   * **Web Interface** (Streamlit dashboard)
   * **Dockerized setup**
-  * **Extra features:** DB storage, **Redis caching**, **WebSocket live updates**
+  * **Extra features:** DB storage, **Alembic migrations**, **Redis caching**, **WebSocket live updates**
