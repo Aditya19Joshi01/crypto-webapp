@@ -19,10 +19,10 @@ Built as part of the **B2C2 Graduate DeFi Developer assignment**.
 ### REST API
 
   * `/prices/{symbol}` – historical price samples
-  * `/prices/{symbol}/latest` – latest cached price (live mode only)
+  * `/prices/{symbol}/latest` – latest price (from Redis if live mode, else from Postgres)
   * `/tvl/{protocol}` – current TVL for a protocol
   * `/health` – health check
-  * `/prices/{symbol}/fetch` – fetch latest price from coingecko server (static mode only)
+  * `/prices/{symbol}/fetch` – fetch latest price on demand (stores in DB, updates cache if live)
 
 ### Web Interface
 
@@ -80,6 +80,15 @@ cd crypto-webapp
 # Build & start all services (backend, frontend, postgres, redis)
 docker compose build
 docker compose up -d
+```
+
+The backend uses **Alembic** for schema management.  
+If you make changes to the models locally, generate a new migration and apply it using Alembic.  
+
+To upgrade your database to the latest schema:  
+
+```bash
+alembic upgrade head
 ```
 
 ### 3\. Access the App
