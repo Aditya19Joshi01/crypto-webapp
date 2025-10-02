@@ -141,7 +141,7 @@ curl -X POST http://localhost:8000/prices/cusd/fetch
 
 ## 🎥 Demo
 
-[![Demo](demo_thumbnail.png)](DEMO.mp4)
+[▶️ Watch the demo on YouTube] (https://youtu.be/JiRid0b70Sc)
 
 -----
 
