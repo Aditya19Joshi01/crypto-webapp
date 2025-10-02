@@ -1,6 +1,18 @@
-# 📈 Crypto Analytics Dashboard
+That's a fantastic, polished, and pragmatic README\! It covers all the essential points while clearly demonstrating forward-thinking and technical competence.
 
-This project is a crypto analytics dashboard built for the **B2C2 Graduate DeFi Developer exercise**. It provides an end-to-end system that fetches live cryptocurrency prices, stores them in a database, exposes them via a REST API, and offers an interactive web dashboard to explore the data.
+Here is the properly formatted `README.md` based on your draft. I've used standard markdown for the headings and lists.
+
+-----
+
+# `README.md`
+
+# 📈 Crypto Dashboard
+
+Prototype cryptocurrency dashboard that fetches and displays real-time crypto price data and DeFi TVL metrics.
+
+Toggle **on** Live Mode to regularly fetch cryptocurrency prices (currently supports only BTC, ETH, cUSD) in real-time, it is set to **off** by default.
+
+Built as part of the **B2C2 Graduate DeFi Developer assignment**.
 
 -----
 
@@ -8,133 +20,138 @@ This project is a crypto analytics dashboard built for the **B2C2 Graduate DeFi 
 
 ### Data Integration
 
-  * Fetches **BTC** and **ETH** prices from [CoinGecko](https://www.coingecko.com).
-  * Fetches **cUSD** price via blockchain integration (future extension).
-  * Fetches **TVL (Total Value Locked)** for any DeFi protocol using the [DeFi Llama API](https://defillama.com/).
-  * Stores data efficiently in **PostgreSQL**.
-  * Caching layer with **Redis** for performance and reduced API calls.
-  * Graceful error handling for API failures.
+  * **BTC & ETH** prices from CoinGecko
+  * **cUSD** price via **Celo blockchain node** (Web3, SortedOracles)
+  * **Protocol TVL** from DeFiLlama
 
-### REST API (FastAPI)
+### REST API
 
-The backend exposes the following endpoints:
+  * `/prices/{symbol}` – historical price samples
+  * `/prices/{symbol}/latest` – latest cached price (live mode only)
+  * `/tvl/{protocol}` – current TVL for a protocol
+  * `/health` – health check
+  * `/prices/{symbol}/fetch` – fetch latest price from coingecko server (static mode only)
 
-  * `GET /prices/{symbol}` → Historical prices from the database.
-  * `GET /prices/{symbol}/latest` → Most recent saved price.
-  * `POST /prices/{symbol}/fetch` → Fetches the latest price from the upstream API and saves it to the database.
-  * `GET /tvl/{protocol}` → TVL of a given DeFi protocol (e.g., `aave`).
-  * `GET /health` → Healthcheck.
+### Web Interface
 
-Interactive documentation is available at: **👉 [http://localhost:8000/docs](https://www.google.com/search?q=http://localhost:8000/docs)**
+  * **Streamlit** dashboard showing charts & tables
 
-### Web Interface (Streamlit)
+### Architecture
 
-The dashboard provides interactive charts for **BTC**, **ETH**, and **cUSD**, featuring:
+  * **FastAPI** backend with OpenAPI/Swagger docs
+  * **Postgres** for historical storage
+  * **Redis** for caching latest prices + **WebSocket pub/sub**
+  * **WebSocket endpoint** for live price updates
 
-  * **Data Overlays**: Toggles for Price (blue line), 7-day MA (orange), 30-day MA (green), and $\Delta$ Price proxy bars (grey, as a proxy for volume).
-  * **Sidebar Controls**:
-      * Select symbol.
-      * Manually fetch the latest price.
-      * Explore TVL for any DeFi protocol.
-      * Toggle **Live Mode** (switches the backend between static and live polling).
-  * **Dynamic y-axis scaling** (avoids the flat-line effect when prices vary in a narrow band).
+### Deployment
 
-> **Note on Frontend**: The Streamlit interface is **temporary**. I am actively developing a dedicated frontend using **React** and will update the repository with the new application soon.
+  * Dockerized with `docker-compose`
+  * Environment variables stored centrally
 
 -----
 
-## 🏗️ Architecture
+## 📂 Repository Structure
 
-The entire application is containerized using **Docker Compose** for easy setup and dependency management.
-
-```mermaid
-graph TD
-    A[Docker Compose] --> B(backend: FastAPI)
-    A --> C(streamlit: Dashboard UI)
-    A --> D(postgres: Data Persistence)
-    A --> E(redis: Caching)
-    B --> D
-    B --> E
-    B --> C
+```
+.
+├── backend/
+│   ├── app.py                # FastAPI app (endpoints, poller, WebSocket)
+│   ├── config.py             # Config/env defaults
+│   ├── database.py           # SQLAlchemy async setup
+│   ├── models/price_model.py # SQLAlchemy Price model
+│   ├── services/services.py  # External integrations (CoinGecko, DeFiLlama, cUSD via Web3)
+│   └── requirements.txt      # Backend dependencies
+├── frontend/
+│   └── streamlit_app.py      # Streamlit dashboard (current UI)
+├── docker-compose.yml        # Orchestration (backend, frontend, postgres, redis)
+├── Dockerfile                # Backend container
+├── Dockerfile.frontend       # Streamlit/Next.js frontend container
+└── README.md
 ```
 
-  * **Backend**: FastAPI serving the REST API, handling DB integration, and caching.
-  * **Frontend**: Streamlit application served via a separate container for the dashboard UI.
-  * **Database**: PostgreSQL for persistent data storage, utilizing a persistent volume.
-  * **Cache**: Redis for temporary storage, session management, and throttling external API calls.
-
 -----
 
-## ⚙️ Setup Instructions
+## 🛠️ Setup Instructions
 
-### 1\. Clone the Repository
+### 1\. Prerequisites
+
+  * **Docker** + **Docker Compose**
+  * **Git**
+
+### 2\. Clone & Run
 
 ```bash
 git clone https://github.com/Aditya19Joshi01/crypto-webapp.git
-cd crypto-dashboard
+cd crypto-webapp
+
+# Build & start all services (backend, frontend, postgres, redis)
+docker compose build
+docker compose up -d
 ```
 
-### 2\. Run with Docker Compose
+### 3\. Access the App
 
-Use the following command to build the images and start all services:
+  * **Backend API docs** → `http://localhost:8000/docs`
+  * **Streamlit Dashboard** → `http://localhost:8501`
+
+### 4\. Populate Initial Data (static mode only)
+
+To see data, initially trigger a fetch for each symbol:
 
 ```bash
-docker compose up --build
+curl -X POST http://localhost:8000/prices/bitcoin/fetch
+curl -X POST http://localhost:8000/prices/ethereum/fetch
+curl -X POST http://localhost:8000/prices/cusd/fetch
 ```
 
-### 3\. Access Services
+-----
 
-| Service | URL / Port | Description |
+## 📡 API Examples
+
+| Request | Description | Example |
 | :--- | :--- | :--- |
-| **API Docs** | **[http://localhost:8000/docs](https://www.google.com/search?q=http://localhost:8000/docs)** | Interactive FastAPI documentation |
-| **Dashboard** | **[http://localhost:8501](https://www.google.com/search?q=http://localhost:8501)** | The main Streamlit web interface |
-| PostgreSQL | `localhost:5432` | Database connection port |
-| Redis | `localhost:6379` | Cache connection port |
-
-### 📦 Requirements
-
-If running locally (without Docker):
-
-```bash
-pip install -r requirements.txt
-```
-
-### 📊 Sample Output
-
-**API response (`GET /prices/bitcoin/latest`):**
-
-```json
-{
-  "symbol": "bitcoin",
-  "price": 42000.53,
-  "timestamp": "2025-10-02T09:30:00Z"
-}
-```
-
-**TVL response (`GET /tvl/aave`):**
-
-```json
-{
-  "protocol": "aave",
-  "tvl_usd": 5634829183.42,
-  "last_updated": "2025-10-02T09:25:00Z"
-}
-```
+| Latest BTC price | Fetches latest cached price from Redis | `curl http://localhost:8000/prices/bitcoin/latest` |
+| Fetch ETH on-demand | Triggers an immediate fetch and cache update | `curl -X POST http://localhost:8000/prices/ethereum/fetch` |
+| TVL of Aave | Fetches current Total Value Locked | `curl http://localhost:8000/tvl/aave` |
+| Toggle live mode | Starts/stops the background data poller and WebSocket updates | `curl -X POST -H "Content-Type: application/json" -d '{"live":true}' http://localhost:8000/mode` |
 
 -----
 
-## 🔮 Next Steps (Future Enhancements)
+## ⚙️ Tech Stack
 
-  * Real-time updates via **WebSockets**.
-  * Web3 wallet integration (MetaMask) to show wallet balances.
-  * Authentication & user watchlists.
-  * **GraphQL** support as an alternative API.
-  * Unit & integration tests.
-  * CI/CD pipeline with monitoring.
+  * **Backend:** FastAPI, SQLAlchemy (async), httpx
+  * **Frontend:** Streamlit (prototype UI; Next.js React planned)
+  * **Database:** Postgres (historical price storage)
+  * **Cache:** Redis (latest prices + WebSocket pub/sub)
+  * **Blockchain:** `Web3.py` (fetch cUSD price from Celo)
+  * **Containerization:** Docker & Docker Compose
 
 -----
 
-### 👨‍💻 Author
+## 📌 Key Decisions
 
-Developed by **Aditya S Joshi**
-As part of the **B2C2 Graduate DeFi Developer application exercise**.
+  * Used **Docker Compose** to orchestrate backend, frontend, DB, and cache for a streamlined setup.
+  * Chose **Streamlit** for quick prototyping of the UI; a **Next.js** frontend will be added later for production quality.
+  * Designed the system with **extensibility** (can add new coins/protocols easily).
+
+-----
+
+## 🔮 Next Steps
+
+  * Replace Streamlit with **Next.js React frontend** (already scaffolded).
+  * Add **wallet connection** (MetaMask/WalletConnect) for user balances and interaction.
+  * Improve DB layer with migrations (**Alembic**) and indexing.
+  * Expand test coverage with unit & integration tests.
+  * Add monitoring/metrics for performance.
+
+-----
+
+## ✅ Assignment Coverage
+
+  * Fetch BTC, ETH (CoinGecko)
+  * Fetch cUSD (**blockchain node, Web3**)
+  * Fetch TVL (DeFiLlama)
+  * **REST API** with required endpoints + error handling
+  * **Web Interface** (Streamlit dashboard)
+  * **Dockerized setup**
+  * **Extra features:** DB storage, **Redis caching**, **WebSocket live updates**
