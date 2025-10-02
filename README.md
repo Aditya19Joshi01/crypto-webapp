@@ -139,6 +139,14 @@ curl -X POST http://localhost:8000/prices/cusd/fetch
 
 -----
 
+## 🎥 Demo
+
+<video src="DEMO.mp4" controls="controls" width="700">
+  Your browser does not support the video tag.
+</video>
+
+-----
+
 ## 🔮 Next Steps
 
   * Replace Streamlit with **Next.js React frontend** (already scaffolded).
