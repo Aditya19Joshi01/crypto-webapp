@@ -53,7 +53,14 @@ jobs:
           for i in {1..20}; do pg_isready -h localhost -p 5432 -U crypto && break || sleep 1; done
           echo "Waiting for Redis to be available..."
           for i in {1..20}; do redis-cli -h localhost ping && break || sleep 1; done
+      - name: Prepare for pytest (disable plugin autoload)
+        run: |
+          # uninstall web3 pytest plugin that may try to import eth_typing incompatible versions
+          pip uninstall -y web3 pytest-ethereum || true
+
       - name: Run unit tests
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
           pytest -q --maxfail=1
       - name: Run flake8
@@ -61,6 +68,7 @@ jobs:
           flake8
       - name: Run integration tests
         env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
           RUN_INTEGRATION: 1
           BACKEND_URL: http://localhost:8000
           DATABASE_URL: postgresql+asyncpg://crypto:crypto@localhost:5432/cryptodb
@@ -72,6 +80,8 @@ jobs:
           sleep 3
           pytest -q -m integration
       - name: Coverage report
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
           pytest --maxfail=1 --disable-warnings -q --cov=backend --cov-report=xml
       - name: Upload coverage artifact
