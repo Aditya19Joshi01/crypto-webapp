@@ -55,8 +55,8 @@ jobs:
           for i in {1..20}; do redis-cli -h localhost ping && break || sleep 1; done
       - name: Prepare for pytest (disable plugin autoload)
         run: |
-          # uninstall web3 pytest plugin that may try to import eth_typing incompatible versions
-          pip uninstall -y web3 pytest-ethereum || true
+          # don't uninstall web3 (the app needs it at runtime). Only remove pytest plugin if present
+          pip uninstall -y pytest-ethereum || true
 
       - name: Run unit tests
         env:
@@ -71,11 +71,40 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://crypto:crypto@localhost:5432/cryptodb
           REDIS_URL: redis://localhost:6379/0
         run: |
-          # Start the backend in background using uvicorn
-          uvicorn backend.app:app --host 0.0.0.0 --port 8000 &
-          # allow server to start
-          sleep 3
+          # Start the backend in background using uvicorn and capture logs
+          uvicorn backend.app:app --host 0.0.0.0 --port 8000 >uvicorn.log 2>&1 &
+          echo $! > uvicorn.pid
+
+          # Poll health endpoint until ready (or timeout)
+          echo "Waiting for backend health endpoint..."
+          ready=0
+          for i in {1..30}; do
+            if curl -sSf http://localhost:8000/health >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "Backend failed to start after 30s. Dumping uvicorn log:" 
+            echo "--- uvicorn.log ---"
+            cat uvicorn.log || true
+            echo "--- end uvicorn.log ---"
+            echo "Process list:" 
+            ps aux || true
+            echo "Netstat (listening ports):"
+            ss -ltnp || netstat -ltnp || true
+            # ensure we stop any uvicorn we started
+            kill $(cat uvicorn.pid) || true
+            exit 1
+          fi
+
+          # Run only integration-marked tests
           pytest -q -m integration
+
+          # Teardown: kill uvicorn
+          kill $(cat uvicorn.pid) || true
       - name: Coverage report
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
