@@ -9,7 +9,9 @@ st.set_page_config(page_title="Crypto Dashboard (dev)", layout="wide")
 st.title("📈 Crypto Dashboard — Development UI (Streamlit)")
 
 # -------------------- BACKEND CONFIG -------------------- #
-DEFAULT_BACKEND = os.getenv("BACKEND_URL", "http://backend:8000")  # ✅ use docker service by default
+DEFAULT_BACKEND = os.getenv(
+    "BACKEND_URL", "http://backend:8000"
+)  # ✅ use docker service by default
 backend_url = st.sidebar.text_input("Backend base URL", value=DEFAULT_BACKEND)
 
 # symbol mapping to match backend
@@ -31,7 +33,9 @@ try:
 
     toggle = st.sidebar.checkbox("Enable Live Mode", value=live_mode)
     if toggle != live_mode:
-        update_resp = requests.post(f"{backend_url}/mode", json={"live": toggle}, timeout=5)
+        update_resp = requests.post(
+            f"{backend_url}/mode", json={"live": toggle}, timeout=5
+        )
         update_resp.raise_for_status()
         st.sidebar.success(f"Live mode set to {toggle}")
 except Exception as e:
@@ -44,7 +48,9 @@ st.sidebar.markdown("### Quick actions")
 symbol = st.sidebar.selectbox("Symbol", list(SYMBOL_MAP.keys()))
 if st.sidebar.button("Fetch latest price"):
     try:
-        resp = requests.post(f"{backend_url}/prices/{SYMBOL_MAP[symbol]}/fetch", timeout=10)
+        resp = requests.post(
+            f"{backend_url}/prices/{SYMBOL_MAP[symbol]}/fetch", timeout=10
+        )
         resp.raise_for_status()
         st.success("✅ Latest price fetched and saved to DB")
         st.json(resp.json())
@@ -84,7 +90,9 @@ with col1:
         if data:
             df = pd.DataFrame(data)
             if "timestamp" in df.columns:
-                df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
+                df["timestamp"] = pd.to_datetime(
+                    df["timestamp"], errors="coerce", utc=True
+                )
                 df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
 
                 # filter by days
@@ -103,39 +111,61 @@ with col1:
                     charts = []
                     if show_price:
                         charts.append(
-                            alt.Chart(df).mark_line(color="#1f77b4").encode(
+                            alt.Chart(df)
+                            .mark_line(color="#1f77b4")
+                            .encode(
                                 x="timestamp:T",
-                                y=alt.Y("price:Q", title="Price (USD)", scale=alt.Scale(domain=[y_min, y_max])),
-                                tooltip=["timestamp:T", "price:Q"]
+                                y=alt.Y(
+                                    "price:Q",
+                                    title="Price (USD)",
+                                    scale=alt.Scale(domain=[y_min, y_max]),
+                                ),
+                                tooltip=["timestamp:T", "price:Q"],
                             )
                         )
                     if show_ma7:
                         charts.append(
-                            alt.Chart(df).mark_line(color="orange").encode(
+                            alt.Chart(df)
+                            .mark_line(color="orange")
+                            .encode(
                                 x="timestamp:T",
-                                y=alt.Y("MA7:Q", title="Price (USD)", scale=alt.Scale(domain=[y_min, y_max])),
-                                tooltip=["timestamp:T", "MA7:Q"]
+                                y=alt.Y(
+                                    "MA7:Q",
+                                    title="Price (USD)",
+                                    scale=alt.Scale(domain=[y_min, y_max]),
+                                ),
+                                tooltip=["timestamp:T", "MA7:Q"],
                             )
                         )
                     if show_ma30:
                         charts.append(
-                            alt.Chart(df).mark_line(color="green").encode(
+                            alt.Chart(df)
+                            .mark_line(color="green")
+                            .encode(
                                 x="timestamp:T",
-                                y=alt.Y("MA30:Q", title="Price (USD)", scale=alt.Scale(domain=[y_min, y_max])),
-                                tooltip=["timestamp:T", "MA30:Q"]
+                                y=alt.Y(
+                                    "MA30:Q",
+                                    title="Price (USD)",
+                                    scale=alt.Scale(domain=[y_min, y_max]),
+                                ),
+                                tooltip=["timestamp:T", "MA30:Q"],
                             )
                         )
                     if show_delta:
                         charts.append(
-                            alt.Chart(df).mark_bar(opacity=0.3).encode(
+                            alt.Chart(df)
+                            .mark_bar(opacity=0.3)
+                            .encode(
                                 x="timestamp:T",
                                 y=alt.Y("delta:Q", title="Δ Price (proxy)"),
-                                tooltip=["timestamp:T", "delta:Q"]
+                                tooltip=["timestamp:T", "delta:Q"],
                             )
                         )
 
                     if charts:
-                        combined_chart = alt.layer(*charts).resolve_scale(y="independent")
+                        combined_chart = alt.layer(*charts).resolve_scale(
+                            y="independent"
+                        )
                         st.altair_chart(combined_chart, use_container_width=True)
                     else:
                         st.warning("No series selected — enable at least one above.")
@@ -165,4 +195,6 @@ with col2:
 
 # -------------------- FOOTER -------------------- #
 st.markdown("---")
-st.caption("⚠️ Dev UI — add authentication, caching, and a production-grade frontend for real deployment.")
+st.caption(
+    "⚠️ Dev UI — add authentication, caching, and a production-grade frontend for real deployment."
+)

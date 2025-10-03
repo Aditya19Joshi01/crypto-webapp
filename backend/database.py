@@ -6,10 +6,13 @@ import logging
 
 engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 
-AsyncSessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+AsyncSessionLocal = sessionmaker(
+    bind=engine, class_=AsyncSession, expire_on_commit=False
+)
 Base = declarative_base()
 
 logger = logging.getLogger("backend.database")
+
 
 async def init_db():
     # create tables (blocking run_sync) with basic retry while Postgres starts
@@ -22,5 +25,7 @@ async def init_db():
         except Exception as e:
             attempt += 1
             wait_seconds = min(5, 0.5 * attempt)
-            logger.warning(f"Database not ready (attempt {attempt}): {e}. Retrying in {wait_seconds}s...")
+            logger.warning(
+                f"Database not ready (attempt {attempt}): {e}. Retrying in {wait_seconds}s..."
+            )
             await asyncio.sleep(wait_seconds)

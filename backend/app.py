@@ -5,14 +5,26 @@ import os
 import sys
 import contextlib
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Set, Optional
+from typing import Dict, Any, Set, Optional
 
 import httpx
+
 try:
     import redis.asyncio as redis
 except Exception as e:
-    raise RuntimeError("Missing dependency 'redis'. Please install backend/requirements.txt: pip install -r backend/requirements.txt") from e
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Body
+    raise RuntimeError(
+        "Missing dependency 'redis'. "
+        "Please install backend/requirements.txt: "
+        "pip install -r backend/requirements.txt"
+    ) from e
+from fastapi import (
+    FastAPI,
+    WebSocket,
+    WebSocketDisconnect,
+    Depends,
+    HTTPException,
+    Body,
+)
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, func
@@ -20,8 +32,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import REDIS_URL, POLL_INTERVAL, SYMBOLS
 from backend.database import AsyncSessionLocal, init_db
-from backend.models.price_model import Price, Base
-from backend.services.services import fetch_coingecko_price, fetch_defillama_tvl, fetch_cusd_price
+from backend.models.price_model import Price
+from backend.services.services import fetch_coingecko_price, fetch_cusd_price
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +45,7 @@ app = FastAPI(title="Crypto Dashboard (Realtime)")
 
 # CORS for frontend during development
 from fastapi.middleware.cors import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # narrow this in production
@@ -46,6 +59,7 @@ redis_client = None
 
 # simple in-memory set of connected websockets
 connected_websockets: Set[WebSocket] = set()
+
 
 # dependency for getting DB session
 async def get_db():
@@ -72,18 +86,25 @@ def normalize_symbol(symbol: str) -> str:
 
     if key in alias_map:
         return alias_map[key]
-    raise HTTPException(status_code=400, detail=f"Unsupported symbol '{symbol}'. Supported: {', '.join(SYMBOLS)}")
+    raise HTTPException(
+        status_code=400,
+        detail=f"Unsupported symbol '{symbol}'. Supported: {', '.join(SYMBOLS)}",
+    )
+
 
 def _prompt_yes_no(prompt: str, default: bool) -> bool:
     try:
         if not sys.stdin or not sys.stdin.isatty():
             return default
         val = input(prompt).strip().lower()
-        if val in ("y", "yes"): return True
-        if val in ("n", "no"): return False
+        if val in ("y", "yes"):
+            return True
+        if val in ("n", "no"):
+            return False
         return default
     except Exception:
         return default
+
 
 def _prompt_int(prompt: str, default_value: int) -> int:
     try:
@@ -93,6 +114,7 @@ def _prompt_int(prompt: str, default_value: int) -> int:
         return int(val) if val else default_value
     except Exception:
         return default_value
+
 
 def _load_runtime_config():
     env_live = os.getenv("LIVE_MODE")
@@ -104,7 +126,9 @@ def _load_runtime_config():
     retention_default = 300
 
     live_mode = (
-        env_live.lower() in ("1", "true", "yes", "y") if env_live is not None else live_default
+        env_live.lower() in ("1", "true", "yes", "y")
+        if env_live is not None
+        else live_default
     )
     try:
         fetch_interval = int(env_interval) if env_interval else interval_default
@@ -117,17 +141,21 @@ def _load_runtime_config():
 
     if env_live is None and sys.stdin and sys.stdin.isatty():
         live_mode = _prompt_yes_no(
-            f"Enable live fetching? (y/n) [default {'y' if live_default else 'n'}]: ", live_default
+            f"Enable live fetching? (y/n) [default {'y' if live_default else 'n'}]: ",
+            live_default,
         )
         if live_mode:
             fetch_interval = _prompt_int(
-                f"Fetch interval seconds [default {interval_default}]: ", interval_default
+                f"Fetch interval seconds [default {interval_default}]: ",
+                interval_default,
             )
             cache_retention = _prompt_int(
-                f"Cache retention seconds [default {retention_default}]: ", retention_default
+                f"Cache retention seconds [default {retention_default}]: ",
+                retention_default,
             )
 
     return live_mode, fetch_interval, cache_retention
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -148,13 +176,16 @@ async def startup_event():
     if app.state.live_mode:
         redis_client = redis.from_url(REDIS_URL, decode_responses=True)
         for symbol in SYMBOLS:
-            await redis_client.hset("latest_prices", symbol, json.dumps({"price": None, "timestamp": None}))
+            await redis_client.hset(
+                "latest_prices", symbol, json.dumps({"price": None, "timestamp": None})
+            )
         app.state.poller_task = asyncio.create_task(price_poller())
         logger.info("Startup complete: DB initialized, Redis primed, poller started")
     else:
         redis_client = None
         app.state.poller_task = None
         logger.info("Startup complete: Static mode (no Redis, no poller)")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -170,11 +201,13 @@ async def shutdown_event():
         await redis_client.close()
     logger.info("Shutdown complete")
 
+
 # REST: health
 @app.get("/health")
 async def health():
     logger.debug("Health check requested")
     return {"status": "ok"}
+
 
 # REST: latest price
 @app.get("/prices/{symbol}/latest")
@@ -204,25 +237,42 @@ async def latest_price(symbol: str):
         if not row:
             logger.warning(f"No price rows in Postgres for {sym}")
             raise HTTPException(status_code=404, detail="Price not found")
-        payload = {"symbol": row.symbol, "price": row.price, "timestamp": row.timestamp.isoformat(), "id": row.id}
+        payload = {
+            "symbol": row.symbol,
+            "price": row.price,
+            "timestamp": row.timestamp.isoformat(),
+            "id": row.id,
+        }
         logger.debug(f"Latest price from Postgres for {sym}: {payload}")
         return JSONResponse(content=payload)
+
 
 # REST: historical from Postgres
 from fastapi import Query
 
+
 @app.get("/prices/{symbol}")
-async def historical_prices(symbol: str, db: AsyncSession = Depends(get_db), limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0)):
+async def historical_prices(
+    symbol: str,
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
     sym = normalize_symbol(symbol)
     return await _historical_prices_impl(db, sym, limit=limit, offset=offset)
 
-async def _historical_prices_impl(db: AsyncSession, sym: str, limit: int = 100, offset: int = 0):
+
+async def _historical_prices_impl(
+    db: AsyncSession, sym: str, limit: int = 100, offset: int = 0
+):
     # sanitize pagination
     lim = min(max(1, int(limit)), 1000)
     off = max(0, int(offset))
     logger.info(f"Historical prices requested for {sym}")
     # total count
-    total_res = await db.execute(select(func.count()).select_from(Price).where(Price.symbol == sym))
+    total_res = await db.execute(
+        select(func.count()).select_from(Price).where(Price.symbol == sym)
+    )
     total_count = int(total_res.scalar() or 0)
     # page
     q = (
@@ -234,10 +284,21 @@ async def _historical_prices_impl(db: AsyncSession, sym: str, limit: int = 100, 
     )
     res = await db.execute(q)
     rows = res.scalars().all()
-    out = [{"symbol": r.symbol, "price": r.price, "timestamp": r.timestamp.isoformat(), "id": r.id} for r in rows]
-    logger.debug(f"Historical rows returned for {sym}: {len(out)} (offset={off}, limit={lim}, total={total_count})")
+    out = [
+        {
+            "symbol": r.symbol,
+            "price": r.price,
+            "timestamp": r.timestamp.isoformat(),
+            "id": r.id,
+        }
+        for r in rows
+    ]
+    logger.debug(
+        f"Historical rows returned for {sym}: {len(out)} (offset={off}, limit={lim}, total={total_count})"
+    )
     # Return a plain list as the frontend expects an array of items
     return out
+
 
 # REST: TVL
 @app.get("/tvl/{protocol}")
@@ -265,11 +326,15 @@ async def tvl(protocol: str):
                     text = resp.text.strip()
                     try:
                         val = float(text)
-                        logger.debug(f"TVL scalar response parsed as float for {protocol}: {val}")
+                        logger.debug(
+                            f"TVL scalar response parsed as float for {protocol}: {val}"
+                        )
                         return {"tvl": val}
                     except Exception:
                         # fallback: return raw string under 'tvl_raw'
-                        logger.debug(f"TVL non-JSON/non-numeric response for {protocol}: {text}")
+                        logger.debug(
+                            f"TVL non-JSON/non-numeric response for {protocol}: {text}"
+                        )
                         return {"tvl_raw": text}
 
                 # If JSON parsed successfully, normalize into an object the frontend can consume
@@ -290,7 +355,9 @@ async def tvl(protocol: str):
                     if "tvl" in data:
                         # make sure tvl is numeric when possible
                         try:
-                            data["tvl"] = float(data["tvl"]) if data["tvl"] is not None else None
+                            data["tvl"] = (
+                                float(data["tvl"]) if data["tvl"] is not None else None
+                            )
                         except Exception:
                             pass
                     return data
@@ -299,15 +366,20 @@ async def tvl(protocol: str):
                 attempt += 1
                 if attempt >= 3:
                     logger.error(f"TVL fetch failed for {protocol}: {e}")
-                    raise HTTPException(status_code=502, detail="Upstream TVL service error")
+                    raise HTTPException(
+                        status_code=502, detail="Upstream TVL service error"
+                    )
                 await asyncio.sleep(2 ** (attempt - 1))
             except Exception as e:
                 last_exc = e
                 attempt += 1
                 if attempt >= 3:
                     logger.error(f"TVL fetch unreachable for {protocol}: {e}")
-                    raise HTTPException(status_code=502, detail="TVL service unreachable")
+                    raise HTTPException(
+                        status_code=502, detail="TVL service unreachable"
+                    )
                 await asyncio.sleep(2 ** (attempt - 1))
+
 
 # REST: on-demand fetch and persist latest price (used in static mode)
 @app.post("/prices/{symbol}/fetch")
@@ -351,6 +423,7 @@ async def fetch_price_now(symbol: str):
 
     return {"symbol": sym, "price": value, "timestamp": timestamp.isoformat()}
 
+
 # Websocket endpoint: clients connect to receive live price updates
 @app.websocket("/ws/prices")
 async def ws_prices(ws: WebSocket):
@@ -360,11 +433,19 @@ async def ws_prices(ws: WebSocket):
     try:
         while True:
             # Send keepalive ping every 30s
-            await ws.send_text(json.dumps({"type": "ping", "timestamp": datetime.now(tz=timezone.utc).isoformat()}))
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "type": "ping",
+                        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                    }
+                )
+            )
             await asyncio.sleep(30)
     except WebSocketDisconnect:
         connected_websockets.discard(ws)
         logger.info(f"WebSocket client disconnected. Total={len(connected_websockets)}")
+
 
 # Internal helper: broadcast to connected websockets
 async def broadcast_message(message: Dict[str, Any]):
@@ -381,6 +462,7 @@ async def broadcast_message(message: Dict[str, Any]):
         connected_websockets.discard(ws)
     logger.debug(f"Broadcasted update: {message['symbol']} -> {message['price']}")
 
+
 @app.get("/mode")
 async def get_mode():
     return {
@@ -388,6 +470,8 @@ async def get_mode():
         "poll_interval": float(getattr(app.state, "poll_interval", POLL_INTERVAL)),
         "cache_retention": int(getattr(app.state, "cache_retention", 300)),
     }
+
+
 class ModeUpdate(BaseModel):
     live: bool = True
 
@@ -414,7 +498,9 @@ async def set_mode(payload: ModeUpdate = Body(...)):
         if redis_client is None:
             redis_client = redis.from_url(REDIS_URL, decode_responses=True)
         for symbol in SYMBOLS:
-            await redis_client.hset("latest_prices", symbol, json.dumps({"price": None, "timestamp": None}))
+            await redis_client.hset(
+                "latest_prices", symbol, json.dumps({"price": None, "timestamp": None})
+            )
         app.state.live_mode = True
         app.state.backoff_multiplier = 1.0
         app.state.poller_task = asyncio.create_task(price_poller())
@@ -431,6 +517,7 @@ async def set_mode(payload: ModeUpdate = Body(...)):
         logger.info("Static mode enabled: poller stopped, redis closed")
 
     return {"live_mode": app.state.live_mode}
+
 
 # Background poller
 async def price_poller():
@@ -477,8 +564,12 @@ async def price_poller():
                 ttl = int(getattr(app.state, "cache_retention", 300))
                 await redis_client.expire("latest_prices", ttl)
                 for sym, pr in results.items():
-                    await broadcast_message({"symbol": sym, "price": pr, "timestamp": timestamp})
-                logger.info(f"Redis updated and broadcasted {len(results)} symbols (write-through)")
+                    await broadcast_message(
+                        {"symbol": sym, "price": pr, "timestamp": timestamp}
+                    )
+                logger.info(
+                    f"Redis updated and broadcasted {len(results)} symbols (write-through)"
+                )
             except Exception:
                 logger.exception("Redis write-through failed")
 
@@ -496,12 +587,19 @@ async def price_poller():
             base_interval = float(getattr(app.state, "poll_interval", POLL_INTERVAL))
             fetched_core = sum(1 for s in ("bitcoin", "ethereum") if s in results)
             if fetched_core == 0:
-                app.state.backoff_multiplier = min(4.0, getattr(app.state, "backoff_multiplier", 1.0) * 2.0)
+                app.state.backoff_multiplier = min(
+                    4.0, getattr(app.state, "backoff_multiplier", 1.0) * 2.0
+                )
             else:
-                app.state.backoff_multiplier = max(1.0, getattr(app.state, "backoff_multiplier", 1.0) * 0.5)
+                app.state.backoff_multiplier = max(
+                    1.0, getattr(app.state, "backoff_multiplier", 1.0) * 0.5
+                )
             wait = max(0, base_interval * app.state.backoff_multiplier - elapsed)
-            logger.debug(f"Poller cycle took {elapsed:.3f}s; sleeping {wait:.3f}s (multiplier={app.state.backoff_multiplier:.2f})")
+            logger.debug(
+                f"Poller cycle took {elapsed:.3f}s; sleeping {wait:.3f}s (multiplier={app.state.backoff_multiplier:.2f})"
+            )
             await asyncio.sleep(wait)
+
 
 # --- Retry helpers for external calls ---
 async def _retry_coingecko(client: httpx.AsyncClient, coin: str) -> Optional[float]:
@@ -516,6 +614,7 @@ async def _retry_coingecko(client: httpx.AsyncClient, coin: str) -> Optional[flo
         await asyncio.sleep(2 ** (attempt - 1))
     logger.error(f"CoinGecko failed after retries for {coin}")
     return None
+
 
 async def _retry_cusd() -> Optional[float]:
     attempt = 0
