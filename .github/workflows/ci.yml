@@ -105,13 +105,3 @@ jobs:
 
           # Teardown: kill uvicorn
           kill $(cat uvicorn.pid) || true
-      - name: Coverage report
-        env:
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
-        run: |
-          pytest --maxfail=1 --disable-warnings -q --cov=backend --cov-report=xml
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml
-          path: coverage.xml
