@@ -1,0 +1,21 @@
+FROM node:18-alpine
+WORKDIR /app
+
+# Allow passing API base url at build-time; Next.js needs NEXT_PUBLIC vars at build time
+ARG NEXT_PUBLIC_API_URL="http://localhost:8000"
+
+# Write env file so Next.js inlines NEXT_PUBLIC_API_URL at build time
+# Use localhost because the browser (host) will access the frontend and needs
+# to call the backend on the host's localhost:8000 (docker-compose maps the port).
+RUN echo "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" > .env.local
+
+# Install dependencies (full install because build may need dev deps)
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN npm install
+
+# Copy source and build
+COPY frontend/ .
+RUN npm run build
+
+EXPOSE 3000
+CMD ["npm", "start"]

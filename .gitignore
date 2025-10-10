@@ -38,10 +38,6 @@ logs/
 *.bak
 *.tmp
 
-# Frontend implementation (exclude for first commit)
-frontend/
-Dockerfile.frontend
-
 # Others
 *.tgz
 *.gz
