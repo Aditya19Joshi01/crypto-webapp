@@ -1,10 +1,12 @@
 services:
   backend:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: crypto-dashboard-backend
     command: uvicorn backend.app:app --host 0.0.0.0 --port 8000 --reload
     volumes:
-      - .:/app
+      - ../:/app
     ports:
       - "8000:8000"
     depends_on:
@@ -12,11 +14,13 @@ services:
       - redis
 
   streamlit:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: crypto-dashboard-streamlit
-    command: streamlit run streamlit_app.py --server.address=0.0.0.0 --server.port=8501
+    command: streamlit run resources/streamlit_app.py --server.address=0.0.0.0 --server.port=8501
     volumes:
-      - .:/app
+      - ../:/app
     ports:
       - "8501:8501"
     environment:
@@ -44,8 +48,8 @@ services:
 
   frontend:
     build:
-      context: .
-      dockerfile: Dockerfile.frontend
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
       args:
         - NEXT_PUBLIC_API_URL=http://localhost:8000
     container_name: crypto-dashboard-frontend
