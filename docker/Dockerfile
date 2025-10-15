@@ -4,6 +4,12 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
+# IMPORTANT: This Dockerfile expects the build context to be the repository root.
+# If you run the docker build command from inside the `docker/` directory, pass
+# `..` as the build context so paths like `backend/requirements.txt` are
+# resolved relative to the repository root. Example (from docker/):
+#   docker build -f Dockerfile -t <tag> ..
+
 # Install system dependencies (needed for psycopg2 and others)
 RUN apt-get update && apt-get install -y \
     gcc \
@@ -11,7 +17,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY backend/requirements.txt requirements.txt
+COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project files
