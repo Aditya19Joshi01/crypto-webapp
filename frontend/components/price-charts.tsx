@@ -1,16 +1,48 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
+import { useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area } from "recharts"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 const symbols = ["BTC", "ETH", "cUSD"]
 
+function toBackendSymbol(symbol: string): string {
+  const key = symbol.trim().toLowerCase()
+  if (key === "btc") return "bitcoin"
+  if (key === "eth") return "ethereum"
+  if (key === "cusd") return "cusd"
+  return key
+}
+
+// Binance-inspired dark theme colors
+const CHART_COLORS = {
+  axis: "#A3A3A3", // light gray ticks/labels
+  grid: "#2A2E39", // subtle grid/axis lines
+  line: "#F0B90B", // Binance yellow
+  areaFrom: "rgba(240, 185, 11, 0.24)",
+  areaTo: "rgba(240, 185, 11, 0.04)",
+  tooltipBg: "#0B0E11",
+  tooltipBorder: "#2A2E39",
+  label: "#E5E7EB", // near-white text
+}
+
+function formatNumberShort(value: number): string {
+  const abs = Math.abs(value)
+  if (abs >= 1e12) return `${(value / 1e12).toFixed(2)}T`
+  if (abs >= 1e9) return `${(value / 1e9).toFixed(2)}B`
+  if (abs >= 1e6) return `${(value / 1e6).toFixed(2)}M`
+  if (abs >= 1e3) return `${(value / 1e3).toFixed(2)}K`
+  return `${value}`
+}
+
 async function fetchPriceHistory(symbol: string) {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-  const response = await fetch(`${apiUrl}/prices/${symbol}`)
+  const backendSymbol = toBackendSymbol(symbol)
+  const response = await fetch(`${apiUrl}/prices/${backendSymbol}`)
   if (!response.ok) throw new Error("Failed to fetch price history")
   return response.json()
 }
@@ -62,12 +94,14 @@ function PriceChart({ symbol }: { symbol: string }) {
 
   // Calculate min and max for 'nice' y-axis bounds
   const prices = chartData.map((item: any) => item.price)
-  const minPrice = Math.min(...prices)
-  const maxPrice = Math.max(...prices)
-  // Add some buffer around min/max so line is not cut off
+  const hasAny = prices.length > 0
+  const minPrice = hasAny ? Math.min(...prices) : 0
+  const maxPrice = hasAny ? Math.max(...prices) : 0
+  const spread = Math.max(0.01, maxPrice - minPrice)
+  // Add buffer around min/max so line is not cut off; handle flat series
   const yDomain = [
-    Math.floor(minPrice - (maxPrice - minPrice) * 0.05),
-    Math.ceil(maxPrice + (maxPrice - minPrice) * 0.05)
+    Math.floor((minPrice - spread * 0.05) * 100) / 100,
+    Math.ceil((maxPrice + spread * 0.05) * 100) / 100,
   ]
 
   return (
@@ -76,38 +110,64 @@ function PriceChart({ symbol }: { symbol: string }) {
         <CardTitle>{symbol} Price History</CardTitle>
       </CardHeader>
       <CardContent>
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+        <ResponsiveContainer width="100%" height={420}>
+          <LineChart data={chartData} margin={{ top: 8, right: 24, bottom: 8, left: 8 }}>
+            {/* gradient for area fill */}
+            <defs>
+              <linearGradient id="priceArea" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={CHART_COLORS.areaFrom} />
+                <stop offset="100%" stopColor={CHART_COLORS.areaTo} />
+              </linearGradient>
+            </defs>
+
+            <CartesianGrid stroke={CHART_COLORS.grid} strokeDasharray="3 3" />
             <XAxis
               dataKey="timestamp"
               type="number"
               domain={['dataMin', 'dataMax']}
-              tickFormatter={ts => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-              tick={{ fill: "hsl(var(--muted-foreground))" }}
+              tickFormatter={(ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              tick={{ fill: CHART_COLORS.axis }}
+              stroke={CHART_COLORS.grid}
+              axisLine={{ stroke: CHART_COLORS.grid } as any}
+              tickLine={{ stroke: CHART_COLORS.grid } as any}
+              tickCount={5}
             />
             <YAxis
               type="number"
-              domain={[
-                (dataMin: number) => Math.floor(dataMin - 10),
-                (dataMax: number) => Math.ceil(dataMax + 10),
-              ]}
-              tick={{ fill: "hsl(var(--muted-foreground))" }}
+              domain={yDomain as any}
+              tick={{ fill: CHART_COLORS.axis }}
+              stroke={CHART_COLORS.grid}
+              axisLine={{ stroke: CHART_COLORS.grid } as any}
+              tickLine={{ stroke: CHART_COLORS.grid } as any}
+              tickFormatter={(v) => formatNumberShort(Number(v))}
+              width={64}
+              tickCount={6}
             />
             <Tooltip
               labelFormatter={(ts) => new Date(ts).toLocaleString()}
               contentStyle={{
-                backgroundColor: "hsl(var(--popover))",
-                border: "1px solid hsl(var(--border))",
+                backgroundColor: CHART_COLORS.tooltipBg,
+                border: `1px solid ${CHART_COLORS.tooltipBorder}`,
                 borderRadius: "0.5rem",
+                color: CHART_COLORS.label,
               }}
+              formatter={(value: any) => [`$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}`, 'Price']}
+            />
+            {/* smooth area under the line for visual density */}
+            <Area
+              type="monotone"
+              dataKey="price"
+              stroke="transparent"
+              fill="url(#priceArea)"
+              isAnimationActive={false}
             />
             <Line
               type="monotone"
               dataKey="price"
-              stroke="hsl(var(--chart-1))"
-              strokeWidth={2}
+              stroke={CHART_COLORS.line}
+              strokeWidth={2.5}
               dot={false}
+              isAnimationActive={false}
             />
           </LineChart>
         </ResponsiveContainer>
@@ -117,13 +177,28 @@ function PriceChart({ symbol }: { symbol: string }) {
 }
 
 export function PriceCharts() {
+  const [selectedSymbol, setSelectedSymbol] = useState<string>(symbols[0])
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Historical Charts</h2>
-      <div className="grid gap-4 lg:grid-cols-2">
-        {symbols.map((symbol) => (
-          <PriceChart key={symbol} symbol={symbol} />
-        ))}
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-xl font-semibold">Historical Charts</h2>
+        <div className="w-40">
+          <Select value={selectedSymbol} onValueChange={setSelectedSymbol}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select symbol" />
+            </SelectTrigger>
+            <SelectContent>
+              {symbols.map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {/* Single, full-width chart for the selected symbol */}
+      <div className="w-full">
+        <PriceChart symbol={selectedSymbol} />
       </div>
     </div>
   )

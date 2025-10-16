@@ -10,9 +10,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 const symbols = ["BTC", "ETH", "cUSD"]
 
+function toBackendSymbol(symbol: string): string {
+  const key = symbol.trim().toLowerCase()
+  if (key === "btc") return "bitcoin"
+  if (key === "eth") return "ethereum"
+  if (key === "cusd") return "cusd"
+  return key
+}
+
 async function fetchPriceHistory(symbol: string) {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-  const response = await fetch(`${apiUrl}/prices/${symbol}`)
+  const backendSymbol = toBackendSymbol(symbol)
+  const response = await fetch(`${apiUrl}/prices/${backendSymbol}`)
   if (!response.ok) throw new Error("Failed to fetch price history")
   return response.json()
 }

@@ -8,9 +8,18 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 
 const symbols = ["BTC", "ETH", "cUSD"]
 
+function toBackendSymbol(symbol: string): string {
+  const key = symbol.trim().toLowerCase()
+  if (key === "btc") return "bitcoin"
+  if (key === "eth") return "ethereum"
+  if (key === "cusd") return "cusd"
+  return key
+}
+
 async function fetchLatestPrice(symbol: string) {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-  const response = await fetch(`${apiUrl}/prices/${symbol}/latest`)
+  const backendSymbol = toBackendSymbol(symbol)
+  const response = await fetch(`${apiUrl}/prices/${backendSymbol}/latest`)
   if (!response.ok) throw new Error("Failed to fetch price")
   return response.json()
 }
