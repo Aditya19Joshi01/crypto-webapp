@@ -1,8 +1,10 @@
 "use client"
 
 import { useEffect, useState, useRef } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { getCoins, toUiTicker, getMode } from "@/lib/api"
 
 interface PriceUpdate {
   symbol: string
@@ -11,49 +13,44 @@ interface PriceUpdate {
   timestamp: string
 }
 
-const POLL_INTERVAL_MS = 5000
-const SYMBOLS = ["BTC", "ETH", "cUSD"]
-
-function toBackendSymbol(symbol: string): string {
-  const key = symbol.trim().toLowerCase()
-  if (key === "btc") return "bitcoin"
-  if (key === "eth") return "ethereum"
-  if (key === "cusd") return "cusd"
-  return key
-}
-
 export function LiveTicker() {
   const [updates, setUpdates] = useState<PriceUpdate[]>([])
   const [isConnected, setIsConnected] = useState(false)
   const timerRef = useRef<number | null>(null)
 
-  useEffect(() => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+  // fetch dynamic coins list
+  const { data: coins, isLoading } = useQuery({ queryKey: ["coins"], queryFn: getCoins })
+  const coinList = coins || []
 
+  // fetch mode/config from backend (live_mode, poll_interval)
+  const { data: modeData } = useQuery({ queryKey: ["mode"], queryFn: getMode })
+
+  useEffect(() => {
     let mounted = true
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
     async function fetchAll() {
       try {
-        const fetches = SYMBOLS.map(async (sym) => {
-          const backend = toBackendSymbol(sym)
-          const res = await fetch(`${apiUrl}/prices/${backend}/latest`)
+        const symbols = coinList.map((c: any) => c.symbol)
+        if (symbols.length === 0) return
+
+        const fetches = symbols.map(async (backendSymbol) => {
+          const res = await fetch(`${apiUrl}/prices/${backendSymbol}/latest`)
           if (!res.ok) return null
           const j = await res.json()
           return {
-            symbol: sym,
+            symbol: toUiTicker(backendSymbol, j?.name),
             price: j?.price != null ? Number(j.price) : NaN,
             timestamp: j?.timestamp || new Date().toISOString(),
           } as PriceUpdate
         })
 
         const results = await Promise.all(fetches)
-
         if (!mounted) return
-
         const valid = results.filter((r) => r != null) as PriceUpdate[]
         if (valid.length > 0) {
           setUpdates((prev) => {
-            const merged = [...valid.reverse(), ...prev] // latest first
+            const merged = [...valid.reverse(), ...prev]
             return merged.slice(0, 10)
           })
         }
@@ -65,11 +62,17 @@ export function LiveTicker() {
       }
     }
 
-    // initial fetch
-    fetchAll()
+    // Determine whether we should poll and at what interval.
+    // Backend provides `poll_interval` in seconds and `live_mode` boolean via /mode.
+    const isLive = Boolean(modeData?.live_mode)
+    const pollSeconds = Number(modeData?.poll_interval ?? 5)
+    const pollMs = Math.max(1000, Math.round(pollSeconds * 1000))
 
-    // start interval
-    timerRef.current = window.setInterval(fetchAll, POLL_INTERVAL_MS)
+    // initial fetch + start interval only when coins are available and live mode enabled
+    if (!isLoading && coinList.length > 0 && isLive) {
+      fetchAll()
+      timerRef.current = window.setInterval(fetchAll, pollMs)
+    }
 
     return () => {
       mounted = false
@@ -77,7 +80,7 @@ export function LiveTicker() {
         clearInterval(timerRef.current)
       }
     }
-  }, [])
+  }, [coinList, isLoading, modeData])
 
   return (
     <Card>

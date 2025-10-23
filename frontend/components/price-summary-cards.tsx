@@ -5,20 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TrendingUp, TrendingDown } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { getCoins, toUiTicker } from "@/lib/api"
 
-const symbols = ["BTC", "ETH", "cUSD"]
-
-function toBackendSymbol(symbol: string): string {
-  const key = symbol.trim().toLowerCase()
-  if (key === "btc") return "bitcoin"
-  if (key === "eth") return "ethereum"
-  if (key === "cusd" || key === "cusd") return "cusd"
-  return key
-}
-
-async function fetchLatestWithChange(symbol: string) {
+async function fetchLatestWithChange(backendSymbol: string) {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-  const backendSymbol = toBackendSymbol(symbol)
 
   // fetch latest
   const latestRes = await fetch(`${apiUrl}/prices/${backendSymbol}/latest`)
@@ -55,17 +45,17 @@ async function fetchLatestWithChange(symbol: string) {
   }
 }
 
-function PriceCard({ symbol }: { symbol: string }) {
+function PriceCard({ backendSymbol, display }: { backendSymbol: string; display: string }) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ["price", symbol],
-    queryFn: () => fetchLatestWithChange(symbol),
+    queryKey: ["price", backendSymbol],
+    queryFn: () => fetchLatestWithChange(backendSymbol),
   })
 
   if (isLoading) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium">{symbol}</CardTitle>
+          <CardTitle className="text-sm font-medium">{display}</CardTitle>
         </CardHeader>
         <CardContent>
           <Skeleton className="h-8 w-32" />
@@ -79,7 +69,7 @@ function PriceCard({ symbol }: { symbol: string }) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium">{symbol}</CardTitle>
+          <CardTitle className="text-sm font-medium">{display}</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-destructive">Failed to load</p>
@@ -95,7 +85,7 @@ function PriceCard({ symbol }: { symbol: string }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm font-medium text-muted-foreground">{symbol}</CardTitle>
+        <CardTitle className="text-sm font-medium text-muted-foreground">{display}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="space-y-2">
@@ -125,12 +115,44 @@ function PriceCard({ symbol }: { symbol: string }) {
 }
 
 export function PriceSummaryCards() {
+  const { data: coins, isLoading } = useQuery({ queryKey: ["coins"], queryFn: getCoins, refetchInterval: 30000, refetchOnWindowFocus: true })
+
+  const items = coins || []
+
+  // fallback: show a few placeholders while loading
+  if (isLoading && (!items || items.length === 0)) {
+    return (
+      <div className="space-y-4">
+        <h2 className="text-xl font-semibold">Market Overview</h2>
+        <div className="grid gap-4 md:grid-cols-3">
+          {[...Array(3)].map((_, i) => (
+            <Card key={i}>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">---</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-8 w-32" />
+                <Skeleton className="mt-2 h-4 w-24" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <Alert>
+          <AlertDescription>
+            Prices are fetched from the backend API. Make sure your API is running at{" "}
+            {process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}
+          </AlertDescription>
+        </Alert>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold">Market Overview</h2>
       <div className="grid gap-4 md:grid-cols-3">
-        {symbols.map((symbol) => (
-          <PriceCard key={symbol} symbol={symbol} />
+        {items.map((coin: any) => (
+          <PriceCard key={coin.symbol} backendSymbol={coin.symbol} display={toUiTicker(coin.symbol, coin.name)} />
         ))}
       </div>
       <Alert>

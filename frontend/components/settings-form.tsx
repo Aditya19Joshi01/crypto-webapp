@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useToast } from "@/hooks/use-toast"
+import { getMode } from "@/lib/api"
 
 async function fetchMode() {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
@@ -33,6 +34,17 @@ async function updateMode(live: boolean) {
   return { mode: data.live_mode ? "live" : "static", ...data }
 }
 
+async function updateConfig(payload: { poll_interval?: number; cache_retention?: number }) {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+  const response = await fetch(`${apiUrl}/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw new Error("Failed to update config")
+  const data = await response.json()
+  return data
+}
 
 export function SettingsForm() {
   const { toast } = useToast()
@@ -44,6 +56,14 @@ export function SettingsForm() {
     queryKey: ["mode"],
     queryFn: fetchMode,
   })
+
+  // initialize local inputs from backend values when loaded
+  useEffect(() => {
+    if (modeData) {
+      if (modeData.poll_interval != null) setPollInterval(String(modeData.poll_interval))
+      if (modeData.cache_retention != null) setCacheRetention(String(modeData.cache_retention))
+    }
+  }, [modeData])
 
   const modeMutation = useMutation({
     mutationFn: updateMode,
@@ -63,10 +83,29 @@ export function SettingsForm() {
     },
   })
 
+  const configMutation = useMutation({
+    mutationFn: updateConfig,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mode"] })
+      toast({ title: "Success", description: "Configuration saved" })
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to save configuration", variant: "destructive" })
+    },
+  })
+
   const handleModeToggle = (checked: boolean) => {
     modeMutation.mutate(checked) // directly pass boolean
   }
 
+  const handleSaveConfig = () => {
+    const payload: { poll_interval?: number; cache_retention?: number } = {}
+    const p = Number(pollInterval)
+    const c = Number(cacheRetention)
+    if (!Number.isNaN(p)) payload.poll_interval = p
+    if (!Number.isNaN(c)) payload.cache_retention = c
+    configMutation.mutate(payload)
+  }
 
   if (isLoading) {
     return (
@@ -116,7 +155,7 @@ export function SettingsForm() {
               onChange={(e) => setPollInterval(e.target.value)}
               placeholder="60"
             />
-            <p className="text-sm text-muted-foreground">How often to fetch new data from the API</p>
+            <p className="text-sm text-muted-foreground">How often to fetch new data from the API (minimum 1s)</p>
           </div>
 
           <div className="space-y-2">
@@ -131,7 +170,9 @@ export function SettingsForm() {
             <p className="text-sm text-muted-foreground">How long to keep cached data before refetching</p>
           </div>
 
-          <Button className="w-full">Save Configuration</Button>
+          <Button className="w-full" onClick={handleSaveConfig} disabled={configMutation.isPending}>
+            {configMutation.isPending ? "Saving..." : "Save Configuration"}
+          </Button>
         </CardContent>
       </Card>
 

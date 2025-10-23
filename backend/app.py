@@ -14,12 +14,15 @@ from backend.database import AsyncSessionLocal, init_db
 from backend.models.price_model import Price
 
 # Add missing imports and configuration
-from pydantic import BaseModel
 from fastapi import Body
 import contextlib
 import redis.asyncio as redis
 from backend.config import REDIS_URL, POLL_INTERVAL, SYMBOLS
 from typing import Any, cast, Optional
+from backend.services.coingecko_provider import CoinGeckoProvider
+from backend.services.celo_provider import CeloStablecoinProvider
+from backend.services.binance_provider import BinanceProvider
+from pydantic import BaseModel, Field
 
 app = FastAPI(title="Modular Crypto Dashboard")
 
@@ -30,7 +33,15 @@ app_state = cast(Any, getattr(app, "state"))
 # Annotate with Optional to aid static analysis
 redis_client: Optional[redis.Redis] = None
 
-logging.basicConfig(level=logging.INFO)
+# Only configure basic logging if no handlers have been configured already. This
+# prevents double-printing when the application is run under servers (uvicorn)
+# that configure logging themselves.
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.INFO)
+else:
+    # Ensure root logger level is set to INFO without adding handlers
+    logging.getLogger().setLevel(logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 # CORS Middleware
@@ -446,3 +457,103 @@ async def set_mode(payload: ModeUpdate = Body(...)):
         logger.info("Static mode enabled: poller stopped, redis closed")
 
     return {"live_mode": app_state.live_mode}
+
+
+class ProviderCreate(BaseModel):
+    type: str = Field(..., description="Provider type: 'coingecko', 'celo', or 'binance'")
+    symbol: str = Field(..., description="Unique backend symbol, e.g. 'solana'")
+    display_name: Optional[str] = Field(None, description="Human readable name")
+    # coinGecko specific
+    coingecko_id: Optional[str] = None
+    # celo specific
+    token_address: Optional[str] = None
+    # binance specific
+    binance_symbol: Optional[str] = None
+
+
+@app.get("/providers")
+async def list_providers():
+    """List registered providers (runtime)."""
+    providers = []
+    for p in price_service.get_all_providers():
+        providers.append({
+            "symbol": p.symbol,
+            "name": p.get_display_name(),
+            "provider": p.get_provider_name(),
+        })
+    return {"providers": providers, "count": len(providers)}
+
+
+@app.post("/providers")
+async def create_provider(payload: ProviderCreate):
+    """Register a new provider at runtime. Not persisted across restarts."""
+    symbol = payload.symbol
+    if price_service.get_provider(symbol):
+        raise HTTPException(status_code=400, detail=f"Symbol '{symbol}' already registered")
+
+    typ = payload.type.lower().strip()
+    display = payload.display_name or symbol
+
+    if typ == "coingecko":
+        if not payload.coingecko_id:
+            raise HTTPException(status_code=400, detail="coingecko_id is required for coingecko provider")
+        prov = CoinGeckoProvider(symbol=symbol, coingecko_id=payload.coingecko_id, display_name=display)
+    elif typ == "celo":
+        if not payload.token_address:
+            raise HTTPException(status_code=400, detail="token_address is required for celo provider")
+        prov = CeloStablecoinProvider(symbol=symbol, token_address=payload.token_address, display_name=display)
+    elif typ == "binance":
+        if not payload.binance_symbol:
+            raise HTTPException(status_code=400, detail="binance_symbol is required for binance provider")
+        prov = BinanceProvider(symbol=symbol, binance_symbol=payload.binance_symbol, display_name=display)
+    else:
+        raise HTTPException(status_code=400, detail="Unknown provider type")
+
+    price_service.register_provider(prov)
+    # Try to fetch an initial price immediately so frontend can show a value
+    initial_price = None
+    try:
+        async with httpx.AsyncClient() as client:
+            initial_price = await price_service.fetch_price(symbol, client)
+    except Exception as e:
+        logger.debug(f"Initial price fetch failed for {symbol}: {e}")
+
+    if initial_price is not None:
+        try:
+            async with AsyncSessionLocal() as db:
+                db.add(Price(symbol=symbol, price=float(initial_price)))
+                await db.commit()
+        except Exception as e:
+            logger.debug(f"Failed to persist initial price for {symbol}: {e}")
+
+    return {"message": "Provider registered", "symbol": prov.symbol, "name": prov.get_display_name(), "provider": prov.get_provider_name()}
+
+
+# --- New config endpoint -------------------------------------------------
+class ConfigUpdate(BaseModel):
+    poll_interval: Optional[float] = None
+    cache_retention: Optional[int] = None
+
+
+@app.post("/config")
+async def update_config(payload: ConfigUpdate = Body(...)):
+    """Update runtime fetching configuration (poll interval, cache retention).
+
+    Poll interval is clamped to a sensible minimum (1s) to avoid extremely
+    tight polling that could hammer external APIs.
+    """
+    MIN_POLL = 1.0
+    changed = {}
+    if payload.poll_interval is not None:
+        new_poll = float(payload.poll_interval)
+        if new_poll < MIN_POLL:
+            new_poll = MIN_POLL
+        app_state.poll_interval = new_poll
+        changed["poll_interval"] = app_state.poll_interval
+
+    if payload.cache_retention is not None:
+        app_state.cache_retention = int(payload.cache_retention)
+        changed["cache_retention"] = app_state.cache_retention
+
+    logger.info(f"Configuration updated: {changed}")
+    return {"updated": changed}
