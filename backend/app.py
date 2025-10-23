@@ -250,3 +250,89 @@ async def price_poller():
             except Exception as e:
                 logger.error(f"Poller error: {e}", exc_info=True)
                 await asyncio.sleep(5)  # Wait before retry
+
+# REST: TVL
+@app.get("/tvl/{protocol}")
+async def tvl(protocol: str):
+    logger.info(f"TVL requested for protocol={protocol}")
+    # Custom retry with status handling
+    url = f"https://api.llama.fi/tvl/{protocol}"
+    attempt = 0
+    last_exc = None
+    async with httpx.AsyncClient() as client:
+        while attempt < 3:
+            try:
+                if attempt > 0:
+                    logger.debug(f"TVL retry attempt {attempt} for {protocol}")
+                resp = await client.get(url, timeout=10.0)
+                if resp.status_code == 404:
+                    logger.error(f"TVL protocol not found: {protocol}")
+                    raise HTTPException(status_code=404, detail="Protocol not found")
+                resp.raise_for_status()
+                # Try to parse JSON first
+                try:
+                    data = resp.json()
+                except Exception:
+                    # Not JSON — try to parse as a float/scalar from text
+                    text = resp.text.strip()
+                    try:
+                        val = float(text)
+                        logger.debug(
+                            f"TVL scalar response parsed as float for {protocol}: {val}"
+                        )
+                        return {"tvl": val}
+                    except Exception:
+                        # fallback: return raw string under 'tvl_raw'
+                        logger.debug(
+                            f"TVL non-JSON/non-numeric response for {protocol}: {text}"
+                        )
+                        return {"tvl_raw": text}
+
+                # If JSON parsed successfully, normalize into an object the frontend can consume
+                if isinstance(data, (int, float)):
+                    return {"tvl": float(data)}
+                if isinstance(data, str):
+                    # try numeric
+                    try:
+                        return {"tvl": float(data)}
+                    except Exception:
+                        return {"tvl_raw": data}
+                if isinstance(data, list):
+                    # Some endpoints may return arrays — wrap them
+                    return {"items": data}
+                if isinstance(data, dict):
+                    # Common DeFiLlama structure may already be a dict with useful fields
+                    # Ensure there is a numeric 'tvl' field if present; otherwise wrap entire dict
+                    if "tvl" in data:
+                        # make sure tvl is numeric when possible
+                        try:
+                            data["tvl"] = (
+                                float(data["tvl"]) if data["tvl"] is not None else None
+                            )
+                        except Exception:
+                            pass
+                    return data
+            except httpx.HTTPStatusError as e:
+                last_exc = e
+                attempt += 1
+                if attempt >= 3:
+                    logger.error(f"TVL fetch failed for {protocol}: {e}")
+                    raise HTTPException(
+                        status_code=502, detail="Upstream TVL service error"
+                    )
+                await asyncio.sleep(2 ** (attempt - 1))
+            except Exception as e:
+                last_exc = e
+                attempt += 1
+                if attempt >= 3:
+                    logger.error(f"TVL fetch unreachable for {protocol}: {e}")
+                    raise HTTPException(
+                        status_code=502, detail="TVL service unreachable"
+                    )
+                await asyncio.sleep(2 ** (attempt - 1))
+
+
+# Get mode
+app.get("/mode")
+async def get_mode():
+    """Get current mode of the application (Live-mode : true/false)"""
