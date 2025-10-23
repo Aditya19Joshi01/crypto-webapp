@@ -1,28 +1,30 @@
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text, func
 import httpx
 import json
 import asyncio
 import logging
-from datetime import datetime, timezone
+import contextlib
+import redis.asyncio as redis
 
+from fastapi import Body
+from pydantic import BaseModel, Field
+from typing import Any, cast, Optional
+from datetime import datetime, timezone
 from starlette.middleware.cors import CORSMiddleware
 
 from backend.services.price_service import price_service
-from backend.database import AsyncSessionLocal, init_db
-from backend.models.price_model import Price
-
-# Add missing imports and configuration
-from fastapi import Body
-import contextlib
-import redis.asyncio as redis
-from backend.config import REDIS_URL, POLL_INTERVAL, SYMBOLS
-from typing import Any, cast, Optional
+from backend.services.binance_provider import BinanceProvider
 from backend.services.coingecko_provider import CoinGeckoProvider
 from backend.services.celo_provider import CeloStablecoinProvider
-from backend.services.binance_provider import BinanceProvider
-from pydantic import BaseModel, Field
+from backend.services.tvl_service import fetch_tvl
+
+from backend.database import AsyncSessionLocal, init_db
+
+from backend.models.price_model import Price
+
+from backend.config import REDIS_URL, POLL_INTERVAL, SYMBOLS
 
 app = FastAPI(title="Modular Crypto Dashboard")
 
@@ -33,13 +35,10 @@ app_state = cast(Any, getattr(app, "state"))
 # Annotate with Optional to aid static analysis
 redis_client: Optional[redis.Redis] = None
 
-# Only configure basic logging if no handlers have been configured already. This
-# prevents double-printing when the application is run under servers (uvicorn)
-# that configure logging themselves.
+# Configure logging
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO)
 else:
-    # Ensure root logger level is set to INFO without adding handlers
     logging.getLogger().setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
@@ -96,7 +95,7 @@ async def shutdown_event():
 
 
 # ============================================
-# ENDPOINTS - Clean and Simple!
+# ENDPOINTS
 # ============================================
 
 @app.get("/")
@@ -115,10 +114,36 @@ async def root():
         }
     }
 
+
 @app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "ok", "timestamp": datetime.now(tz=timezone.utc).isoformat()}
+async def health_check(db: AsyncSession = Depends(get_db)):
+    """
+    Health check endpoint.
+    Checks API responsiveness, database connectivity, Redis connectivity,
+    and number of registered providers.
+    """
+    # allow mixed-value types (str for api, int for provider counts)
+    checks: dict[str, Any] = {"api": "ok"}
+
+    # Check database
+    try:
+        await db.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except:
+        checks["database"] = "error"
+
+    # Check Redis
+    if redis_client:
+        try:
+            await redis_client.ping()
+            checks["redis"] = "ok"
+        except:
+            checks["redis"] = "error"
+
+    # Check provider count
+    checks["providers"] = len(price_service.get_all_providers())
+
+    return checks
 
 
 @app.get("/coins")
@@ -252,7 +277,7 @@ async def fetch_price_now(symbol: str, db: AsyncSession = Depends(get_db)):
 
 
 # ============================================
-# BACKGROUND PRICE POLLER - Super Clean!
+# BACKGROUND PRICE POLLER
 # ============================================
 
 async def price_poller():
@@ -325,82 +350,11 @@ async def price_poller():
 # REST: TVL
 @app.get("/tvl/{protocol}")
 async def tvl(protocol: str):
+    """Fetch TVL for a protocol via the tvl service for cleaner modularity."""
     logger.info(f"TVL requested for protocol={protocol}")
-    # Custom retry with status handling
-    url = f"https://api.llama.fi/tvl/{protocol}"
-    attempt = 0
-    last_exc = None
     async with httpx.AsyncClient() as client:
-        while attempt < 3:
-            try:
-                if attempt > 0:
-                    logger.debug(f"TVL retry attempt {attempt} for {protocol}")
-                resp = await client.get(url, timeout=10.0)
-                if resp.status_code == 404:
-                    logger.error(f"TVL protocol not found: {protocol}")
-                    raise HTTPException(status_code=404, detail="Protocol not found")
-                resp.raise_for_status()
-                # Try to parse JSON first
-                try:
-                    data = resp.json()
-                except Exception:
-                    # Not JSON — try to parse as a float/scalar from text
-                    text = resp.text.strip()
-                    try:
-                        val = float(text)
-                        logger.debug(
-                            f"TVL scalar response parsed as float for {protocol}: {val}"
-                        )
-                        return {"tvl": val}
-                    except Exception:
-                        # fallback: return raw string under 'tvl_raw'
-                        logger.debug(
-                            f"TVL non-JSON/non-numeric response for {protocol}: {text}"
-                        )
-                        return {"tvl_raw": text}
-
-                # If JSON parsed successfully, normalize into an object the frontend can consume
-                if isinstance(data, (int, float)):
-                    return {"tvl": float(data)}
-                if isinstance(data, str):
-                    # try numeric
-                    try:
-                        return {"tvl": float(data)}
-                    except Exception:
-                        return {"tvl_raw": data}
-                if isinstance(data, list):
-                    # Some endpoints may return arrays — wrap them
-                    return {"items": data}
-                if isinstance(data, dict):
-                    # Common DeFiLlama structure may already be a dict with useful fields
-                    # Ensure there is a numeric 'tvl' field if present; otherwise wrap entire dict
-                    if "tvl" in data:
-                        # make sure tvl is numeric when possible
-                        try:
-                            data["tvl"] = (
-                                float(data["tvl"]) if data["tvl"] is not None else None
-                            )
-                        except Exception:
-                            pass
-                    return data
-            except httpx.HTTPStatusError as e:
-                last_exc = e
-                attempt += 1
-                if attempt >= 3:
-                    logger.error(f"TVL fetch failed for {protocol}: {e}")
-                    raise HTTPException(
-                        status_code=502, detail="Upstream TVL service error"
-                    )
-                await asyncio.sleep(2 ** (attempt - 1))
-            except Exception as e:
-                last_exc = e
-                attempt += 1
-                if attempt >= 3:
-                    logger.error(f"TVL fetch unreachable for {protocol}: {e}")
-                    raise HTTPException(
-                        status_code=502, detail="TVL service unreachable"
-                    )
-                await asyncio.sleep(2 ** (attempt - 1))
+        # fetch_tvl will raise HTTPException on failures; it returns a normalized dict on success
+        return await fetch_tvl(protocol, client)
 
 
 @app.get("/mode")
@@ -537,7 +491,8 @@ class ConfigUpdate(BaseModel):
 
 @app.post("/config")
 async def update_config(payload: ConfigUpdate = Body(...)):
-    """Update runtime fetching configuration (poll interval, cache retention).
+    """
+    Update runtime fetching configuration (poll interval, cache retention).
 
     Poll interval is clamped to a sensible minimum (1s) to avoid extremely
     tight polling that could hammer external APIs.
@@ -557,3 +512,34 @@ async def update_config(payload: ConfigUpdate = Body(...)):
 
     logger.info(f"Configuration updated: {changed}")
     return {"updated": changed}
+
+
+@app.get("/metrics")
+async def metrics(db: AsyncSession = Depends(get_db)):
+    """
+    Expose basic metrics about the service.
+    - total price records stored
+    - number of registered providers
+    - latest fetch time per symbol
+    """
+    # Count total price records
+    stmt = select(func.count(Price.id))
+    result = await db.execute(stmt)
+    total_prices = result.scalar()
+
+    # Get latest fetch time per symbol
+    latest_by_symbol = {}
+    for symbol in price_service.get_all_symbols():
+        # build condition as Any to satisfy static analyser
+        from typing import Any
+        cond: Any = Price.symbol == symbol
+        stmt = select(Price.timestamp).where(cond).order_by(Price.timestamp.desc()).limit(1)
+        result = await db.execute(stmt)
+        ts = result.scalar()
+        latest_by_symbol[symbol] = ts.isoformat() if ts else None
+
+    return {
+        "total_records": total_prices,
+        "providers": len(price_service.get_all_providers()),
+        "latest_fetches": latest_by_symbol
+    }
