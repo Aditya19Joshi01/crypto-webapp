@@ -6,7 +6,6 @@ import json
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import List
 
 from starlette.middleware.cors import CORSMiddleware
 
@@ -14,10 +13,25 @@ from backend.services.price_service import price_service
 from backend.database import AsyncSessionLocal, init_db
 from backend.models.price_model import Price
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Add missing imports and configuration
+from pydantic import BaseModel
+from fastapi import Body
+import contextlib
+import redis.asyncio as redis
+from backend.config import REDIS_URL, POLL_INTERVAL, SYMBOLS
+from typing import Any, cast, Optional
 
 app = FastAPI(title="Modular Crypto Dashboard")
+
+# Expose a typed-any alias for app.state to avoid static analysis warnings
+app_state = cast(Any, getattr(app, "state"))
+
+# Module-level redis client (initialized when live mode is enabled)
+# Annotate with Optional to aid static analysis
+redis_client: Optional[redis.Redis] = None
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # CORS Middleware
 app.add_middleware(
@@ -39,19 +53,33 @@ async def startup_event():
     logger.info("Starting up...")
     await init_db()
 
+    # Initialize app state defaults to avoid attribute errors and provide observability
+    app_state.live_mode = True
+    app_state.poll_interval = float(getattr(app_state, "poll_interval", POLL_INTERVAL))
+    app_state.cache_retention = int(getattr(app_state, "cache_retention", 300))
+    app_state.backoff_multiplier = float(getattr(app_state, "backoff_multiplier", 1.0))
+    app_state.poller_task = None
+
     # Start price poller
-    app.state.poller_task = asyncio.create_task(price_poller())
+    app_state.poller_task = asyncio.create_task(price_poller())
     logger.info("Startup complete")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Shutting down...")
-    if hasattr(app.state, "poller_task"):
-        app.state.poller_task.cancel()
+    if getattr(app_state, "poller_task", None):
+        app_state.poller_task.cancel()
         try:
-            await app.state.poller_task
+            await app_state.poller_task
         except asyncio.CancelledError:
+            pass
+    # close redis if open
+    global redis_client
+    if redis_client is not None:
+        try:
+            await redis_client.close()
+        except Exception:
             pass
     logger.info("Shutdown complete")
 
@@ -69,9 +97,17 @@ async def root():
             "coins": "/coins",
             "latest_price": "/prices/{symbol}/latest",
             "historical": "/prices/{symbol}",
-            "fetch_now": "/prices/{symbol}/fetch"
+            "fetch_now": "/prices/{symbol}/fetch",
+            "tvl": "/tvl/{protocol}",
+            "mode": "/mode",
+            "health": "/health"
         }
     }
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "ok", "timestamp": datetime.now(tz=timezone.utc).isoformat()}
 
 
 @app.get("/coins")
@@ -105,7 +141,10 @@ async def get_latest_price(symbol: str, db: AsyncSession = Depends(get_db)):
         )
 
     # Get most recent price from database
-    stmt = select(Price).where(Price.symbol == symbol).order_by(Price.timestamp.desc()).limit(1)
+    # build SQLAlchemy condition as Any to avoid static type checker errors
+    from typing import Any
+    cond: Any = Price.symbol == symbol
+    stmt = select(Price).where(cond).order_by(Price.timestamp.desc()).limit(1)
     result = await db.execute(stmt)
     price_record = result.scalar_one_or_none()
 
@@ -143,9 +182,12 @@ async def get_historical_prices(
         )
 
     # Get historical prices
+    # build condition as Any to satisfy static analyser
+    from typing import Any
+    cond: Any = Price.symbol == symbol
     stmt = (
         select(Price)
-        .where(Price.symbol == symbol)
+        .where(cond)
         .order_by(Price.timestamp.desc())
         .limit(limit)
     )
@@ -206,6 +248,7 @@ async def price_poller():
     """
     Fetch prices for ALL registered cryptocurrencies periodically.
     No hardcoded lists! Automatically fetches everything in PriceService.
+    Writes latest prices to Redis (if configured) and stores history in DB.
     """
     logger.info("Price poller started")
 
@@ -229,7 +272,21 @@ async def price_poller():
                     async with AsyncSessionLocal() as db:
                         try:
                             for symbol, price in successful.items():
+                                # persist history
                                 db.add(Price(symbol=symbol, price=float(price)))
+                                # update redis latest cache when available
+                                if redis_client is not None:
+                                    try:
+                                        await redis_client.hset(
+                                            "latest_prices",
+                                            symbol,
+                                            json.dumps({
+                                                "price": float(price),
+                                                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                                            }),
+                                        )
+                                    except Exception as e:
+                                        logger.debug(f"Failed to update redis for {symbol}: {e}")
                             await db.commit()
                             logger.info(f"Stored {len(successful)} prices in database")
                         except Exception as e:
@@ -238,9 +295,11 @@ async def price_poller():
                 else:
                     logger.warning("No prices fetched in this cycle")
 
-                # Sleep until next cycle
+                # Sleep until next cycle (respects configured poll interval and backoff)
                 elapsed = asyncio.get_event_loop().time() - start_time
-                sleep_time = max(0, 30 - elapsed)  # Poll every 30 seconds
+                poll_interval = float(getattr(app_state, "poll_interval", POLL_INTERVAL))
+                backoff = float(getattr(app_state, "backoff_multiplier", 1.0))
+                sleep_time = max(0.0, poll_interval * backoff - elapsed)
                 logger.debug(f"Cycle took {elapsed:.2f}s, sleeping {sleep_time:.2f}s")
                 await asyncio.sleep(sleep_time)
 
@@ -249,7 +308,8 @@ async def price_poller():
                 break
             except Exception as e:
                 logger.error(f"Poller error: {e}", exc_info=True)
-                await asyncio.sleep(5)  # Wait before retry
+                await asyncio.sleep(2)
+
 
 # REST: TVL
 @app.get("/tvl/{protocol}")
@@ -332,7 +392,57 @@ async def tvl(protocol: str):
                 await asyncio.sleep(2 ** (attempt - 1))
 
 
-# Get mode
-app.get("/mode")
+@app.get("/mode")
 async def get_mode():
-    """Get current mode of the application (Live-mode : true/false)"""
+    return {
+        "live_mode": bool(getattr(app_state, "live_mode", False)),
+        "poll_interval": float(getattr(app_state, "poll_interval", POLL_INTERVAL)),
+        "cache_retention": int(getattr(app_state, "cache_retention", 300)),
+    }
+
+
+class ModeUpdate(BaseModel):
+    live: bool = True
+
+
+@app.post("/mode")
+async def set_mode(payload: ModeUpdate = Body(...)):
+    global redis_client
+    desired = bool(payload.live)
+    current = bool(getattr(app_state, "live_mode", False))
+    logger.info(f"Mode toggle requested: {current} -> {desired}")
+    if desired == current:
+        return {"live_mode": current}
+
+    # Stop existing poller if any
+    if getattr(app_state, "poller_task", None):
+        t = app_state.poller_task
+        t.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await t
+        app_state.poller_task = None
+
+    if desired:
+        # starting live mode: init redis and poller
+        if redis_client is None:
+            redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+        for symbol in SYMBOLS:
+            await redis_client.hset(
+                "latest_prices", symbol, json.dumps({"price": None, "timestamp": None})
+            )
+        app_state.live_mode = True
+        app_state.backoff_multiplier = 1.0
+        app_state.poller_task = asyncio.create_task(price_poller())
+        logger.info("Live mode enabled: poller started")
+    else:
+        # switching to static: close redis
+        if redis_client is not None:
+            try:
+                await redis_client.close()
+            except Exception:
+                pass
+        redis_client = None
+        app_state.live_mode = False
+        logger.info("Static mode enabled: poller stopped, redis closed")
+
+    return {"live_mode": app_state.live_mode}
