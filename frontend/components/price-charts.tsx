@@ -44,7 +44,12 @@ async function fetchPriceHistory(symbol: string) {
   const backendSymbol = toBackendSymbol(symbol)
   const response = await fetch(`${apiUrl}/prices/${backendSymbol}`)
   if (!response.ok) throw new Error("Failed to fetch price history")
-  return response.json()
+  const json = await response.json()
+
+  // backend now returns { symbol, count, prices: [{ price, timestamp }, ...] }
+  const prices = Array.isArray(json?.prices) ? json.prices : []
+  // ensure we return an array of items the chart expects
+  return prices.map((p: any) => ({ price: Number(p.price), timestamp: p.timestamp }))
 }
 
 function PriceChart({ symbol }: { symbol: string }) {

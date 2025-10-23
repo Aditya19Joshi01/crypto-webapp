@@ -13,20 +13,20 @@ services:
       - postgres
       - redis
 
-  streamlit:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    container_name: crypto-dashboard-streamlit
-    command: streamlit run resources/streamlit_app.py --server.address=0.0.0.0 --server.port=8501
-    volumes:
-      - ../:/app
-    ports:
-      - "8501:8501"
-    environment:
-      - BACKEND_URL=http://backend:8000
-    depends_on:
-      - backend
+#  streamlit:
+#    build:
+#      context: ..
+#      dockerfile: docker/Dockerfile
+#    container_name: crypto-dashboard-streamlit
+#    command: streamlit run resources/streamlit_app.py --server.address=0.0.0.0 --server.port=8501
+#    volumes:
+#      - ../:/app
+#    ports:
+#      - "8501:8501"
+#    environment:
+#      - BACKEND_URL=http://backend:8000
+#    depends_on:
+#      - backend
 
   postgres:
     image: postgres:15

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 
@@ -11,62 +11,71 @@ interface PriceUpdate {
   timestamp: string
 }
 
+const POLL_INTERVAL_MS = 5000
+const SYMBOLS = ["BTC", "ETH", "cUSD"]
+
+function toBackendSymbol(symbol: string): string {
+  const key = symbol.trim().toLowerCase()
+  if (key === "btc") return "bitcoin"
+  if (key === "eth") return "ethereum"
+  if (key === "cusd") return "cusd"
+  return key
+}
+
 export function LiveTicker() {
   const [updates, setUpdates] = useState<PriceUpdate[]>([])
   const [isConnected, setIsConnected] = useState(false)
+  const timerRef = useRef<number | null>(null)
 
   useEffect(() => {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-    const wsUrl = apiUrl.replace("http", "ws")
-    const ws = new WebSocket(`${wsUrl}/ws/prices`)
 
-    ws.onopen = () => {
-      setIsConnected(true)
-      console.log("[v0] WebSocket connected")
-    }
+    let mounted = true
 
-    ws.onmessage = (event) => {
+    async function fetchAll() {
       try {
-        const data = JSON.parse(event.data)
-        // ignore ping or other control messages
-        if (!data || typeof data !== "object") return
-        if (data.type === "ping") return
+        const fetches = SYMBOLS.map(async (sym) => {
+          const backend = toBackendSymbol(sym)
+          const res = await fetch(`${apiUrl}/prices/${backend}/latest`)
+          if (!res.ok) return null
+          const j = await res.json()
+          return {
+            symbol: sym,
+            price: j?.price != null ? Number(j.price) : NaN,
+            timestamp: j?.timestamp || new Date().toISOString(),
+          } as PriceUpdate
+        })
 
-        // require at least a symbol
-        if (!data.symbol) return
+        const results = await Promise.all(fetches)
 
-        // normalize timestamp (fallback to now)
-        const ts = data.timestamp || new Date().toISOString()
+        if (!mounted) return
 
-        // attempt to coerce price to number; allow NaN to represent unavailable price
-        const rawPrice = data.price
-        const priceNum = typeof rawPrice === "string" || typeof rawPrice === "number" ? Number(rawPrice) : NaN
-
-        const update: PriceUpdate = {
-          symbol: String(data.symbol),
-          price: Number.isFinite(priceNum) ? priceNum : NaN,
-          timestamp: ts,
+        const valid = results.filter((r) => r != null) as PriceUpdate[]
+        if (valid.length > 0) {
+          setUpdates((prev) => {
+            const merged = [...valid.reverse(), ...prev] // latest first
+            return merged.slice(0, 10)
+          })
         }
 
-        console.log("[v0] Received price update:", update)
-        setUpdates((prev: PriceUpdate[]) => [update, ...prev].slice(0, 10))
+        setIsConnected(true)
       } catch (err) {
-        console.error("[v0] Failed to parse WS message", err)
+        console.error("[v1] Polling error", err)
+        setIsConnected(false)
       }
     }
 
-    ws.onerror = (error) => {
-      console.error("[v0] WebSocket error:", error)
-      setIsConnected(false)
-    }
+    // initial fetch
+    fetchAll()
 
-    ws.onclose = () => {
-      setIsConnected(false)
-      console.log("[v0] WebSocket disconnected")
-    }
+    // start interval
+    timerRef.current = window.setInterval(fetchAll, POLL_INTERVAL_MS)
 
     return () => {
-      ws.close()
+      mounted = false
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+      }
     }
   }, [])
 

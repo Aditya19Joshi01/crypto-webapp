@@ -18,12 +18,24 @@ function toBackendSymbol(symbol: string): string {
   return key
 }
 
+// Normalize the backend historical response into an array the component expects
 async function fetchPriceHistory(symbol: string) {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
   const backendSymbol = toBackendSymbol(symbol)
   const response = await fetch(`${apiUrl}/prices/${backendSymbol}`)
   if (!response.ok) throw new Error("Failed to fetch price history")
-  return response.json()
+  const json = await response.json()
+
+  // backend returns { symbol, count, prices: [{ price, timestamp }, ...] }
+  const prices = Array.isArray(json?.prices) ? json.prices : []
+
+  // Map to include a symbol and optional volume field so the table can render
+  return prices.map((p: any) => ({
+    symbol: symbol,
+    price: p.price,
+    timestamp: p.timestamp,
+    volume: p.volume ?? null,
+  }))
 }
 
 export function PriceTable() {
